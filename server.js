@@ -36,9 +36,10 @@ const validateChatRequest = (req, res, next) => {
       return res.status(400).json({ error: 'Invalid message role' });
     }
     
-    // Max 2000 chars per message
-    if (msg.content.length > 2000) {
-      return res.status(400).json({ error: 'Message content too long (max 2000 chars)' });
+    // Max 5000 chars for system instructions, 2000 for user/assistant messages
+    const maxChars = msg.role === 'system' ? 5000 : 2000;
+    if (msg.content.length > maxChars) {
+      return res.status(400).json({ error: `Message content too long (max ${maxChars} chars)` });
     }
   }
   
