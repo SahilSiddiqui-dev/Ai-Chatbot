@@ -1,7 +1,5 @@
 import { useState, useEffect, useRef } from "react";
 
-const GROQ_API_KEY = import.meta.env.VITE_GROQ_API_KEY || import.meta.env.VITE_GEMINI_API_KEY;
-
 // FAQ Knowledge Base for Hair Transplant Clinic
 const FAQ_KNOWLEDGE_BASE = `
 You are Chloe, a friendly, professional customer support specialist for Sahil Hair Clinic (a premium hair restoration clinic):
@@ -202,23 +200,16 @@ export default function SahilCoChatbot() {
     setTimeout(() => setIsOpen(false), 280);
   };
 
+  const sanitizeInput = (text) => {
+    // Max 500 chars, trim whitespace, remove HTML tags
+    return text.trim().slice(0, 500).replace(/<[^>]*>/g, "");
+  };
+
   const sendMessage = async () => {
-    const text = input.trim();
-    if (!text || isTyping) return;
+    const sanitizedText = sanitizeInput(input);
+    if (!sanitizedText || isTyping) return;
 
-    if (!GROQ_API_KEY) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "model",
-          text: "Error: API key not configured. Please set VITE_GROQ_API_KEY or VITE_GEMINI_API_KEY in your .env.local file.",
-          time: formatTime(new Date()),
-        },
-      ]);
-      return;
-    }
-
-    const userMsg = { role: "user", text, time: formatTime(new Date()) };
+    const userMsg = { role: "user", text: sanitizedText, time: formatTime(new Date()) };
     const updatedMessages = [...messages, userMsg];
     setMessages(updatedMessages);
     setInput("");
@@ -233,58 +224,55 @@ export default function SahilCoChatbot() {
         history = history.slice(1);
       }
       
-      // Convert to Groq API format (OpenAI compatible)
+      // Convert to API format (OpenAI compatible)
       const messagesForAPI = [
         { role: "system", content: SYSTEM_INSTRUCTION },
         ...history.map((m) => ({
           role: m.role === "model" ? "assistant" : "user",
           content: m.text,
         })),
-        { role: "user", content: text }
+        { role: "user", content: sanitizedText }
       ];
 
-      // Use the Vite dev server proxy in development to avoid CORS issues, or fallback to the direct URL in production
-      const isDev = import.meta.env.DEV;
-      const baseURL = isDev ? "/api-groq" : "https://api.groq.com";
-
-      const response = await fetch(`${baseURL}/openai/v1/chat/completions`, {
+      // Call backend API instead of Groq directly
+      const response = await fetch("/api/chat", {
         method: "POST",
         headers: {
-          "Authorization": `Bearer ${GROQ_API_KEY}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "llama-3.3-70b-versatile",
           messages: messagesForAPI,
-          temperature: 0.7,
-          max_tokens: 400, // increased tokens so Chloe can give detailed answers
         }),
       });
 
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.error?.message || `API error: ${response.status} ${response.statusText}`);
+        const status = response.status;
+        
+        if (status === 429) {
+          throw new Error("Rate limit exceeded");
+        }
+        
+        throw new Error(errData.error || `API error: ${response.status}`);
       }
 
       const data = await response.json();
-      const botText = data.choices?.[0]?.message?.content || "Something went wrong, please try again.";
+      const botText = data.content || "Something went wrong, please try again.";
 
       setMessages((prev) => [
         ...prev,
         { role: "model", text: botText, time: formatTime(new Date()) },
       ]);
     } catch (err) {
-      console.error("Groq API error:", err);
+      console.error("Chat API error:", err);
       
       let errorMsg = "Something went wrong. Please try again.";
       const errMsgLower = (err.message || "").toLowerCase();
       
-      if (errMsgLower.includes("key") || errMsgLower.includes("api key") || errMsgLower.includes("unauthorized") || errMsgLower.includes("invalid")) {
-        errorMsg = "API Error: Please check your Groq API key configuration in .env.local.";
-      } else if (errMsgLower.includes("quota") || errMsgLower.includes("limit") || errMsgLower.includes("429") || errMsgLower.includes("rate")) {
-        errorMsg = "Quota exceeded: Please check your Groq API quota or plan details.";
-      } else if (errMsgLower.includes("network") || errMsgLower.includes("fetch") || errMsgLower.includes("connect")) {
-        errorMsg = "Network error: Please check your connection.";
+      if (errMsgLower.includes("rate")) {
+        errorMsg = "Rate limit exceeded. Please wait a moment and try again.";
+      } else if (errMsgLower.includes("network") || errMsgLower.includes("fetch")) {
+        errorMsg = "Network error. Please check your connection.";
       }
 
       setMessages((prev) => [
@@ -303,10 +291,30 @@ export default function SahilCoChatbot() {
   const handleOverlayFormSubmit = (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
-    const name = formData.get("name");
-    const phone = formData.get("phone");
-    const email = formData.get("email");
-    const concern = formData.get("concern");
+    const name = formData.get("name")?.trim().slice(0, 100) || "";
+    const phone = formData.get("phone")?.trim().slice(0, 20) || "";
+    const email = formData.get("email")?.trim().slice(0, 100) || "";
+    const concern = formData.get("concern")?.trim().slice(0, 200) || "";
+
+    // Validate required fields
+    if (!name || !phone || !email) {
+      alert("Please fill in all required fields");
+      return;
+    }
+
+    // Basic email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      alert("Please enter a valid email address");
+      return;
+    }
+
+    // Basic phone validation (allow numbers, +, -, spaces)
+    const phoneRegex = /^[\d\s+\-()]+$/;
+    if (!phoneRegex.test(phone)) {
+      alert("Please enter a valid phone number");
+      return;
+    }
 
     setShowFormOverlay(false);
 
